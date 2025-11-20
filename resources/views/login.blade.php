@@ -3,6 +3,7 @@
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta name="csrf-token" content="{{ csrf_token() }}">
 	<title>Login – E‑shrimp</title>
 	<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 	@vite(['resources/css/app.css','resources/js/app.js'])
@@ -21,15 +22,17 @@
 					<h1 class="text-lg font-semibold text-zinc-900">Welcome Back</h1>
 					<p class="text-sm text-zinc-600 mt-1">Masuk untuk memantau atau mengelola tambak udang.</p>
 
-					<a href="#" class="mt-6 w-full inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-4 py-2.5 text-sm hover:bg-zinc-50">
-						<div class="h-4 w-4 rounded bg-zinc-900"></div>
-						<span>Continue with Google</span>
-					</a>
-
-					<div class="mt-6 flex items-center justify-between text-sm">
-						<span class="text-zinc-600">Belum punya akun?</span>
-						<a href="#" class="text-zinc-900 font-medium hover:underline">Daftar Now</a>
-					</div>
+					<form id="loginForm" class="space-y-3 mt-6">
+						<div>
+							<label class="block text-xs mb-1 text-zinc-700">Email</label>
+							<input id="loginEmail" type="email" required class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-900/10">
+						</div>
+						<div>
+							<label class="block text-xs mb-1 text-zinc-700">Password</label>
+							<input id="loginPassword" type="password" required class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-900/10">
+						</div>
+						<button type="submit" class="w-full rounded-lg bg-zinc-900 text-white py-2 text-sm hover:bg-zinc-800">Masuk</button>
+					</form>
 				</div>
 				<div class="mt-6 text-center">
 					<a href="/" class="text-sm text-zinc-600 hover:text-zinc-900">← Kembali ke Landing</a>
@@ -38,11 +41,13 @@
 		</div>
 		<div class="relative hidden md:block">
 			<div class="absolute inset-0 flex items-center justify-center px-8">
-				<div class="max-w-lg text-center">
-					<div class="text-4xl font-semibold tracking-tight">E‑SHRIMP</div>
-					<div class="text-zinc-600 mt-1">The best monitoring system</div>
-					<div class="mt-6 aspect-[3/4] rounded-2xl bg-zinc-200"></div>
-					<div class="mt-8 grid grid-cols-2 gap-4 text-sm text-zinc-700">
+				<div class="max-w-xl text-center">
+					<div class="text-5xl md:text-6xl lg:text-7xl font-semibold tracking-tight">E‑SHRIMP</div>
+					<div class="text-zinc-700 mt-1 text-base md:text-lg">The best monitoring system</div>
+					<div class="mt-2">
+						<img src="/image/shrimp.png" alt="Shrimp" class="w-full mx-auto object-contain object-top max-h-[440px] lg:max-h-[560px]">
+					</div>
+					<div class="mt-4 grid grid-cols-2 gap-3 text-sm text-zinc-700">
 						<ul class="space-y-2">
 							<li>Data Analytics</li>
 							<li>Real‑time Monitoring</li>

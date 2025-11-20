@@ -1,0 +1,26 @@
+{
+  "rules": {
+    "peternaks": {
+      ".read": true,
+      ".write": true
+    },
+    "sensor_data": {
+      ".read": true,
+      ".write": true
+    },
+    "thresholds": {
+      ".read": true,
+      ".write": true
+    },
+    "notifications": {
+      ".read": true,
+      ".write": true
+    },
+    "forums": {
+      ".read": true,
+      ".write": true
+    }
+  }
+}
+
+
