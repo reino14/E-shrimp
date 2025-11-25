@@ -14,8 +14,8 @@
 			<div class="w-full max-w-md">
 				<div class="mb-8">
 					<div class="inline-flex items-center gap-2">
-						<div class="h-6 w-6 rounded bg-zinc-900"></div>
-						<span class="font-semibold">E‑Shrimp</span>
+					<img src="/image/logo-eshrimp.png" alt="Logo" class="h-14 w-14 object-contain rounded" />
+						<span class="font-semibold text-2xl">E‑Shrimp</span>
 					</div>
 				</div>
 				<div class="rounded-2xl bg-white/70 backdrop-blur p-6 shadow-sm border border-zinc-200">
@@ -44,8 +44,14 @@
 				<div class="max-w-xl text-center">
 					<div class="text-5xl md:text-6xl lg:text-7xl font-semibold tracking-tight">E‑SHRIMP</div>
 					<div class="text-zinc-700 mt-1 text-base md:text-lg">The best monitoring system</div>
-					<div class="mt-2">
-						<img src="/image/shrimp.png" alt="Shrimp" class="w-full mx-auto object-contain object-top max-h-[440px] lg:max-h-[560px]">
+					<div class="mt-4 mb-4 aspect-[16/10] rounded-2xl overflow-hidden shadow-lg">
+						<video 
+							src="/image/e-shrimp-simulation.mp4" 
+							class="w-full h-full object-cover"
+							autoplay 
+							muted 
+							loop >
+						</video>
 					</div>
 					<div class="mt-4 grid grid-cols-2 gap-3 text-sm text-zinc-700">
 						<ul class="space-y-2">

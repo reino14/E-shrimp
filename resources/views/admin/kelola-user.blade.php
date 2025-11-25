@@ -121,7 +121,8 @@
 						<td class="px-4 py-3 text-sm">${peternak.email_peternak}</td>
 						<td class="px-4 py-3 text-sm">${peternak.nama || '-'}</td>
 						<td class="px-4 py-3 text-sm">${peternak.role || 'peternak'}</td>
-						<td class="px-4 py-3 text-sm">
+								<td class="px-4 py-3 text-sm">
+							<a href="/admin/peternak/${peternak.email_peternak}" class="text-emerald-600 hover:text-emerald-800 text-xs mr-3">Lihat Detail</a>
 							<button onclick="hapusPeternak('${peternak.email_peternak}')" class="text-red-600 hover:text-red-800 text-xs">Hapus</button>
 						</td>
 					</tr>

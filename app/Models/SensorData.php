@@ -14,6 +14,8 @@ class SensorData extends Model
 
     protected $fillable = [
         'robot_id',
+        'kolam_id',
+        'umur_budidaya',
         'waktu',
         'suhu',
         'oksigen',

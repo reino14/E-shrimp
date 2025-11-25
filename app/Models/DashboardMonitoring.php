@@ -10,13 +10,14 @@ class DashboardMonitoring extends Model
     use HasFactory;
 
     protected $table = 'dashboard_monitorings';
-    protected $primaryKey = 'kolam_id';
-    public $incrementing = false;
-    protected $keyType = 'string';
+    protected $primaryKey = 'id';
+    public $incrementing = true;
+    protected $keyType = 'int';
 
     protected $fillable = [
         'kolam_id',
         'email_peternak',
+        'nama_kapal',
         'foto_posisi_kapal',
         'treshold_id',
         'notif_id',
