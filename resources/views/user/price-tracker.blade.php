@@ -98,8 +98,31 @@
 
 		<main class="col-span-12 md:col-span-10 p-4 sm:p-6 md:ml-0">
 			<div class="flex items-center justify-between mb-6">
-				<h1 class="text-lg sm:text-xl font-semibold">Price Tracker - Harga Udang Pasaran</h1>
-				<div class="text-xs text-zinc-500">Update: {{ now()->format('d M Y H:i') }}</div>
+				<h1 class="text-lg sm:text-xl font-semibold">Price Tracker - Harga Udang Vaname</h1>
+				<div class="flex items-center gap-3">
+					<div class="text-xs text-zinc-500">
+						Update: <span id="lastUpdate">
+							@if(isset($lastUpdate))
+								@if(is_string($lastUpdate))
+									{{ $lastUpdate }}
+								@else
+									{{ $lastUpdate->format('d M Y H:i') }}
+								@endif
+							@else
+								{{ now()->format('d M Y H:i') }}
+							@endif
+						</span>
+						@if(isset($source) && $source)
+							<span class="text-zinc-400">({{ $source }})</span>
+						@endif
+					</div>
+					<button onclick="refreshPriceData()" id="refreshBtn" class="px-3 py-1.5 text-xs bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors flex items-center gap-2">
+						<svg id="refreshIcon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+						</svg>
+						<span id="refreshText">Refresh</span>
+					</button>
+				</div>
 			</div>
 			
 			<div class="rounded-2xl border border-zinc-200 overflow-hidden">
@@ -114,25 +137,25 @@
 							</tr>
 						</thead>
 						<tbody class="divide-y divide-zinc-200">
-							@foreach($hargaUdang as $harga)
-							<tr>
+							@forelse($hargaUdang as $harga)
+							<tr class="hover:bg-zinc-50 transition-colors">
 								<td class="px-4 py-3 text-sm font-medium">{{ $harga['ukuran'] }}</td>
-								<td class="px-4 py-3 text-sm">Rp {{ number_format($harga['harga'], 0, ',', '.') }}</td>
+								<td class="px-4 py-3 text-sm font-semibold text-zinc-900">Rp {{ number_format($harga['harga'], 0, ',', '.') }}</td>
 								<td class="px-4 py-3 text-sm">
-									<span class="{{ $harga['trend'] === 'up' ? 'text-green-600' : 'text-red-600' }}">
+									<span class="font-medium {{ $harga['trend'] === 'up' ? 'text-green-600' : 'text-red-600' }}">
 										{{ $harga['perubahan'] }}
 									</span>
 								</td>
 								<td class="px-4 py-3 text-sm">
 									@if($harga['trend'] === 'up')
-									<span class="inline-flex items-center gap-1 text-green-600">
+									<span class="inline-flex items-center gap-1 text-green-600 font-medium">
 										<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
 											<path fill-rule="evenodd" d="M5.293 7.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L6.707 7.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
 										</svg>
 										Naik
 									</span>
 									@else
-									<span class="inline-flex items-center gap-1 text-red-600">
+									<span class="inline-flex items-center gap-1 text-red-600 font-medium">
 										<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
 											<path fill-rule="evenodd" d="M14.707 12.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 14.586V3a1 1 0 012 0v11.586l2.293-2.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
 										</svg>
@@ -141,18 +164,38 @@
 									@endif
 								</td>
 							</tr>
-							@endforeach
+							@empty
+							<tr>
+								<td colspan="4" class="px-4 py-8 text-center text-zinc-500">
+									Data harga sedang dimuat...
+								</td>
+							</tr>
+							@endforelse
 						</tbody>
 					</table>
 				</div>
 			</div>
 			
 			<div class="mt-6 rounded-2xl border border-zinc-200 p-6 bg-zinc-50">
-				<p class="text-sm text-zinc-600">
-					<strong>Catatan:</strong> Harga yang ditampilkan adalah harga pasar rata-rata dan dapat berubah sewaktu-waktu. 
-					Harga aktual dapat berbeda tergantung lokasi, kualitas, dan kondisi pasar. 
-					Disarankan untuk melakukan verifikasi langsung dengan pembeli sebelum melakukan transaksi.
-				</p>
+				<div class="flex items-start gap-3">
+					<svg class="w-5 h-5 text-emerald-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+					</svg>
+					<div>
+						<p class="text-sm text-zinc-700 font-medium mb-2">Catatan Penting:</p>
+						<ul class="text-sm text-zinc-600 space-y-1">
+							<li>• Harga yang ditampilkan adalah harga pasar rata-rata untuk udang vaname dan dapat berubah sewaktu-waktu.</li>
+							<li>• Harga aktual dapat berbeda tergantung lokasi, kualitas, musim, dan kondisi pasar.</li>
+							<li>• Data diambil dari berbagai sumber terpercaya dan diperbarui secara berkala.</li>
+							<li>• Disarankan untuk melakukan verifikasi langsung dengan pembeli sebelum melakukan transaksi.</li>
+						</ul>
+						@if(isset($source) && $source === 'Cache')
+							<p class="text-xs text-amber-600 mt-3">
+								⚠️ Data yang ditampilkan adalah data cache. Klik tombol "Refresh" untuk memperbarui data terbaru.
+							</p>
+						@endif
+					</div>
+				</div>
 			</div>
 		</main>
 	</div>
@@ -173,6 +216,56 @@
 		openBtn && openBtn.addEventListener('click', openSidebar);
 		backdrop && backdrop.addEventListener('click', closeSidebar);
 		window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSidebar(); });
+
+		// Refresh price data
+		async function refreshPriceData() {
+			const refreshBtn = document.getElementById('refreshBtn');
+			const refreshIcon = document.getElementById('refreshIcon');
+			const refreshText = document.getElementById('refreshText');
+			const lastUpdate = document.getElementById('lastUpdate');
+			
+			if (!refreshBtn || refreshBtn.disabled) return;
+			
+			// Disable button and show loading
+			refreshBtn.disabled = true;
+			refreshText.textContent = 'Memperbarui...';
+			refreshIcon.classList.add('animate-spin');
+			
+			try {
+				const response = await fetch('{{ route("api.refresh-price-tracker") }}', {
+					method: 'POST',
+					headers: {
+						'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+						'Accept': 'application/json',
+					},
+				});
+				
+				const result = await response.json();
+				
+				if (result.success) {
+					// Update last update time
+					if (lastUpdate) {
+						lastUpdate.textContent = result.last_update;
+					}
+					
+					// Reload page to show updated data
+					setTimeout(() => {
+						window.location.reload();
+					}, 500);
+				} else {
+					alert('Gagal memperbarui data: ' + (result.message || 'Unknown error'));
+					refreshBtn.disabled = false;
+					refreshText.textContent = 'Refresh';
+					refreshIcon.classList.remove('animate-spin');
+				}
+			} catch (error) {
+				console.error('Error refreshing price data:', error);
+				alert('Terjadi kesalahan saat memperbarui data');
+				refreshBtn.disabled = false;
+				refreshText.textContent = 'Refresh';
+				refreshIcon.classList.remove('animate-spin');
+			}
+		}
 	</script>
 	@include('components.profil-modal')
 </body>

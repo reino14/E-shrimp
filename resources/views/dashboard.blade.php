@@ -199,15 +199,23 @@
 							@php
 								// Calculate duration: 24 hours from mulai_monitoring
 								$startTime = $session->mulai_monitoring;
-								$elapsedSeconds = $startTime ? now()->diffInSeconds($startTime) : 0;
-								$maxDuration = 86400; // 24 hours
+								$maxDuration = 86400; // 24 hours in seconds
+								
+								// Calculate elapsed time considering paused time
+								$elapsedSeconds = 0;
+								if ($startTime) {
+									$totalElapsed = now()->diffInSeconds($startTime);
+									$pausedSeconds = $session->total_paused_seconds ?? 0;
+									$elapsedSeconds = max(0, $totalElapsed - $pausedSeconds);
+								}
+								
 								$remainingSeconds = max(0, $maxDuration - $elapsedSeconds);
 								
 								$hours = floor($remainingSeconds / 3600);
 								$minutes = floor(($remainingSeconds % 3600) / 60);
 								$seconds = $remainingSeconds % 60;
 								$durationText = sprintf('%02d:%02d:%02d', $hours, $minutes, $seconds);
-								$isExpired = $remainingSeconds <= 0;
+								$isExpired = $remainingSeconds <= 0 || !$session->is_active;
 							@endphp
 							<div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 w-full">
 								<div class="flex items-start justify-between mb-3">
@@ -215,9 +223,19 @@
 										<div class="font-semibold text-lg text-zinc-900">{{ $session->nama_kapal }}</div>
 										<div class="text-xs text-zinc-600 mt-1">Kapal ID</div>
 									</div>
-									<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-										▶ Aktif
-									</span>
+									@if($isExpired || !$session->is_active)
+										<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+											⏸ Selesai
+										</span>
+									@elseif($session->is_paused)
+										<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+											⏸ Paused
+										</span>
+									@else
+										<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+											▶ Aktif
+										</span>
+									@endif
 								</div>
 								<div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
 									<div>
@@ -333,7 +351,7 @@
 					<h2 class="font-semibold mb-4">Atur Threshold</h2>
 					<form action="{{ route('user.atur-threshold') }}" method="POST">
 						@csrf
-						<input type="hidden" name="kolam_id" value="{{ $kolam->kolam_id ?? 'KOLAM-001' }}">
+						<input type="hidden" name="kolam_id" value="{{ isset($kolam) && $kolam ? $kolam->kolam_id : 'KOLAM-001' }}">
 						<div class="space-y-4">
 							<div>
 								<label class="block text-sm mb-1">Sensor Tipe</label>
@@ -352,10 +370,10 @@
 								<button type="submit" class="px-4 py-2 rounded-lg bg-zinc-900 text-white hover:bg-zinc-800 text-sm">Simpan</button>
 								<button type="button" onclick="document.getElementById('modalThreshold').classList.add('hidden')" class="px-4 py-2 rounded-lg border border-zinc-300 hover:bg-zinc-50 text-sm">Batal</button>
 							</div>
-							</div>
-						</form>
 						</div>
-							</div>
+					</form>
+				</div>
+			</div>
 
 			<!-- Modal Detail Monitoring Session -->
 			<div id="modalDetailMonitoring" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
@@ -363,12 +381,12 @@
 					<div class="flex items-center justify-between mb-4">
 						<h2 class="font-semibold text-lg">Detail Monitoring Session</h2>
 						<button onclick="closeDetailMonitoringModal()" class="text-zinc-500 hover:text-zinc-700 text-xl">×</button>
-						</div>
+					</div>
 					<div id="detailMonitoringContent" class="space-y-4">
 						<!-- Content will be loaded by JavaScript -->
 					</div>
 				</div>
-					</div>
+			</div>
 
 			<!-- Modal Restart Monitoring -->
 			<div id="modalRestartMonitoring" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
@@ -485,7 +503,8 @@
 			constructor() {
 				// Get kolam_id from first active monitoring session
 				@if(isset($monitoringSessions) && $monitoringSessions->count() > 0)
-					this.kolamId = '{{ $monitoringSessions->first()->kolam_id }}';
+					const firstSession = @json($monitoringSessions->first());
+					this.kolamId = firstSession ? firstSession.kolam_id : null;
 					console.log('[DashboardUpdater] Constructor - kolamId set to:', this.kolamId);
 				@else
 					this.kolamId = null;
@@ -818,6 +837,10 @@
 			}
 
 			async loadNotifications() {
+				if (!this.kolamId) {
+					return; // No kolam ID, skip loading notifications
+				}
+				
 				try {
 					const response = await fetch(`/api/notifications?kolam_id=${this.kolamId}`);
 					const data = await response.json();
@@ -1081,9 +1104,11 @@
 				} else {
 					activityList.innerHTML = this.notifications.slice(0, this.notificationLimit).map(n => {
 						const waktu = n.waktu ? (typeof n.waktu === 'string' ? new Date(n.waktu) : new Date(n.waktu * 1000)) : new Date();
+						const namaKapal = n.nama_kapal || '';
+						const kapalBadge = namaKapal ? `<span class="inline-block text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded mr-2">${namaKapal}</span>` : '';
 						return `<li class="flex items-start gap-2">
 							<span class="inline-block h-2 w-2 rounded-full bg-red-500 mt-1.5"></span>
-							<span>${n.pesan} - ${this.formatTime(waktu)}</span>
+							<span>${kapalBadge}${n.pesan} - ${this.formatTime(waktu)}</span>
 						</li>`;
 					}).join('');
 				}
@@ -1099,9 +1124,19 @@
 			}
 
 			async addNotification(message) {
+				// Get nama kapal from active monitoring session
+				let namaKapal = null;
+				@if(isset($monitoringSessions) && $monitoringSessions->count() > 0)
+					const firstSession = @json($monitoringSessions->first());
+					if (firstSession && firstSession.kolam_id === this.kolamId) {
+						namaKapal = firstSession.nama_kapal;
+					}
+				@endif
+				
 				const newNotif = {
 					id: `local-${Date.now()}`,
 					pesan: message,
+					nama_kapal: namaKapal,
 					waktu: Date.now(),
 				};
 
@@ -1118,6 +1153,7 @@
 						},
 						body: JSON.stringify({
 							kolam_id: this.kolamId,
+							nama_kapal: namaKapal,
 							pesan: message,
 						}),
 					});
@@ -1513,16 +1549,16 @@
 					console.log(`[Simulator] dashboardUpdater available:`, !!window.dashboardUpdater);
 					
 					@foreach($monitoringSessions as $session)
-						@if(!$session->is_paused)
-							console.log(`[Simulator] Starting session {{ $session->session_id }}: kolam={{ $session->kolam_id }}, hari={{ $session->umur_budidaya }}, interval={{ $session->timer_monitoring }}s`);
+						@if($session->is_active && !$session->is_paused)
+							console.log(`[Simulator] Starting session {{ $session->session_id }}: kolam={{ $session->kolam_id }}, hari={{ $session->umur_budidaya }}, interval={{ $session->timer_monitoring ?? '10' }}s`);
 							this.startSimulation(
 								{{ $session->session_id }},
 								'{{ $session->kolam_id }}',
 								{{ $session->umur_budidaya }},
-								'{{ $session->timer_monitoring }}'
+								'{{ $session->timer_monitoring ?? '10' }}'
 							);
 						@else
-							console.log(`[Simulator] Skipping session {{ $session->session_id }} - paused`);
+							console.log(`[Simulator] Skipping session {{ $session->session_id }} - {{ $session->is_paused ? 'paused' : 'inactive' }}`);
 						@endif
 					@endforeach
 					
@@ -1545,7 +1581,7 @@
 		function updateTimers() {
 			@if(isset($monitoringSessions) && $monitoringSessions->count() > 0)
 				@foreach($monitoringSessions as $session)
-					@if($session->mulai_monitoring)
+							@if($session->mulai_monitoring && $session->is_active)
 						(function() {
 							const sessionId = {{ $session->session_id }};
 							const startTime = new Date('{{ $session->mulai_monitoring->toIso8601String() }}').getTime();
@@ -1586,22 +1622,34 @@
 										return;
 									}
 									
-									// If not paused, countdown
-									if (remainingSeconds > 0) {
-										remainingSeconds--;
-										const hours = Math.floor(remainingSeconds / 3600);
-										const minutes = Math.floor((remainingSeconds % 3600) / 60);
-										const seconds = remainingSeconds % 60;
-										timerEl.textContent = String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
-									} else {
-										// Timer reached 0
-										timerEl.textContent = '00:00:00';
-										if (window['timerInterval_' + sessionId]) {
-											clearInterval(window['timerInterval_' + sessionId]);
-											delete window['timerInterval_' + sessionId];
-										}
-										window.location.reload();
+								// If not paused, recalculate and countdown
+								if (!isPaused) {
+									// Recalculate remaining time every second (more accurate)
+									const currentElapsed = Math.floor((Date.now() - startTime) / 1000);
+									const currentActive = Math.max(0, currentElapsed - totalPausedSeconds);
+									remainingSeconds = Math.max(0, maxDuration - currentActive);
+								}
+								
+								if (remainingSeconds > 0) {
+									const hours = Math.floor(remainingSeconds / 3600);
+									const minutes = Math.floor((remainingSeconds % 3600) / 60);
+									const seconds = remainingSeconds % 60;
+									timerEl.textContent = String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+								} else {
+									// Timer reached 0
+									timerEl.textContent = '00:00:00';
+									if (window['timerInterval_' + sessionId]) {
+										clearInterval(window['timerInterval_' + sessionId]);
+										delete window['timerInterval_' + sessionId];
 									}
+									// Only reload once, add a flag to prevent multiple reloads
+									if (!window['reloading_' + sessionId]) {
+										window['reloading_' + sessionId] = true;
+										setTimeout(() => {
+											window.location.reload();
+										}, 1000);
+									}
+								}
 								}
 								
 								// Update immediately
@@ -1680,7 +1728,20 @@
 
 		async function loadNotifications() {
 			try {
-				const response = await fetch('/api/notifications', {
+				// Get kolam_id from dashboardUpdater or use first monitoring session
+				let kolamId = null;
+				if (window.dashboardUpdater && window.dashboardUpdater.kolamId) {
+					kolamId = window.dashboardUpdater.kolamId;
+				} else {
+					@if(isset($monitoringSessions) && $monitoringSessions->count() > 0)
+						kolamId = '{{ $monitoringSessions->first()->kolam_id }}';
+					@elseif(isset($kolam))
+						kolamId = '{{ $kolam->kolam_id }}';
+					@endif
+				}
+				
+				const url = kolamId ? `/api/notifications?kolam_id=${kolamId}` : '/api/notifications';
+				const response = await fetch(url, {
 					method: 'GET',
 					headers: {
 						'Accept': 'application/json',
@@ -1719,11 +1780,15 @@ listEl.innerHTML = '<li class="text-center py-8 text-zinc-500">Tidak ada notifik
 							minute: '2-digit'
 						});
 						
+						const namaKapal = notif.nama_kapal || '';
+						const pesanDisplay = notif.pesan || '';
+						
 						return `
 							<li class="flex items-start gap-2 py-3 border-b border-zinc-100 last:border-b-0">
 								<span class="inline-block h-2 w-2 rounded-full bg-red-500 mt-1.5 flex-shrink-0"></span>
 								<div class="flex-1 min-w-0">
-									<span class="break-words">${notif.pesan || ''}</span>
+									${namaKapal ? `<div class="text-xs font-semibold text-emerald-600 mb-1">Kapal: ${namaKapal}</div>` : ''}
+									<span class="break-words">${pesanDisplay}</span>
 									<div class="text-xs text-zinc-500 mt-1">${waktuFormatted}</div>
 								</div>
 								<button onclick="deleteNotification(${notifId})" class="text-zinc-400 hover:text-red-500 transition-colors ml-2 flex-shrink-0" title="Hapus notifikasi">
@@ -1841,6 +1906,25 @@ listEl.innerHTML = '<li class="text-center py-8 text-zinc-500">Tidak ada notifik
 		document.addEventListener('DOMContentLoaded', function() {
 			loadNotifications();
 		});
+
+		// Missing JavaScript functions
+		function closeDetailMonitoringModal() {
+			document.getElementById('modalDetailMonitoring').classList.add('hidden');
+		}
+
+		function closeRestartModal() {
+			document.getElementById('modalRestartMonitoring').classList.add('hidden');
+		}
+
+		function closeActiveMonitoringModal() {
+			document.getElementById('modalActiveMonitoring').classList.add('hidden');
+		}
+
+		function confirmRestart() {
+			// TODO: Implement restart monitoring logic
+			alert('Fitur restart monitoring akan segera tersedia');
+			closeRestartModal();
+		}
 	</script>
 	@include('components.profil-modal')
 </body>

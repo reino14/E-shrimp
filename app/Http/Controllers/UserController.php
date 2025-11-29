@@ -11,7 +11,9 @@ use App\Models\Forum;
 use App\Models\Peternak;
 use App\Models\RobotKapalEshrimp;
 use App\Models\MonitoringSession;
+use App\Services\PriceTrackerService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class UserController extends Controller
 {
@@ -62,39 +64,113 @@ class UserController extends Controller
             );
         }
         
-        // Get kolam for the peternak
-        // Use firstOrNew to avoid creating if email is dummy and will be updated
-        $kolam = DashboardMonitoring::firstOrNew(
-            ['kolam_id' => 'KOLAM-001']
-        );
+        // Get available kapals for this user
+        $availableKapals = RobotKapalEshrimp::where('email_peternak', $email)
+            ->pluck('robot_id')
+            ->toArray();
         
-        // Only set email if it's not dummy, or if kolam doesn't exist yet
-        if ($email !== 'dummy@example.com' || !$kolam->exists) {
-            $kolam->email_peternak = $email;
-            $kolam->save();
-        } else if ($kolam->email_peternak === 'dummy@example.com' && $email !== 'dummy@example.com') {
-            // Update if email changed from dummy to real
-            $kolam->email_peternak = $email;
-            $kolam->save();
+        // Handle kapal selection
+        $selectedKapal = $request->query('nama_kapal') ?? session('selected_kapal');
+        
+        // Show kapal selection if:
+        // 1. User explicitly requests to change kapal (change_kapal=1)
+        // 2. No kapal is selected AND user has available kapals
+        $showKapalSelection = false;
+        if ($request->query('change_kapal')) {
+            $showKapalSelection = true;
+        } elseif (!$selectedKapal && count($availableKapals) > 0) {
+            $showKapalSelection = true;
+        }
+        
+        // If user selected a kapal, save it to session
+        if ($request->query('nama_kapal') && in_array($request->query('nama_kapal'), $availableKapals)) {
+            session(['selected_kapal' => $request->query('nama_kapal')]);
+            $selectedKapal = $request->query('nama_kapal');
+            $showKapalSelection = false;
+        }
+        
+        // If showing kapal selection, return early with selection form
+        if ($showKapalSelection) {
+            return view('dashboard', compact('showKapalSelection', 'availableKapals'));
+        }
+        
+        // Get monitoring sessions for selected kapal (or all active sessions if no kapal selected)
+        $monitoringSessions = collect();
+        if ($selectedKapal) {
+            $monitoringSessions = MonitoringSession::where('nama_kapal', $selectedKapal)
+                ->where('is_active', true)
+                ->get();
+        } else {
+            // If no kapal selected, get all active sessions for this user's kapals
+            if (count($availableKapals) > 0) {
+                $monitoringSessions = MonitoringSession::whereIn('nama_kapal', $availableKapals)
+                    ->where('is_active', true)
+                    ->get();
+            }
+        }
+        
+        // Get kolam from first active monitoring session, or use default
+        $kolam = null;
+        if ($monitoringSessions->count() > 0) {
+            $firstSession = $monitoringSessions->first();
+            $kolam = DashboardMonitoring::where('kolam_id', $firstSession->kolam_id)->first();
+        }
+        
+        // Fallback to default kolam if no active sessions
+        if (!$kolam) {
+            $kolam = DashboardMonitoring::firstOrNew(
+                ['kolam_id' => 'KOLAM-001']
+            );
+            
+            // Only set email if it's not dummy, or if kolam doesn't exist yet
+            if ($email !== 'dummy@example.com' || !$kolam->exists) {
+                $kolam->email_peternak = $email;
+                $kolam->save();
+            } else if ($kolam->email_peternak === 'dummy@example.com' && $email !== 'dummy@example.com') {
+                // Update if email changed from dummy to real
+                $kolam->email_peternak = $email;
+                $kolam->save();
+            }
         }
 
-        // Get latest sensor data
-        $latestData = SensorData::latest('waktu')->first();
+        // Get latest sensor data for the kolam
+        $latestData = null;
+        if ($kolam) {
+            $latestData = SensorData::where('kolam_id', $kolam->kolam_id)
+                ->latest('waktu')
+                ->first();
+        }
         
         // Get thresholds
-        $thresholds = Threshold::where('kolam_id', $kolam->kolam_id)->get();
+        $thresholds = collect();
+        if ($kolam) {
+            $thresholds = Threshold::where('kolam_id', $kolam->kolam_id)->get();
+        }
         
         // Get unread notifications
-        $notifikasis = Notifikasi::where('kolam_id', $kolam->kolam_id)
-            ->where('status', false)
-            ->latest('waktu')
-            ->take(5)
-            ->get();
+        $notifikasis = collect();
+        if ($kolam) {
+            $notifikasis = Notifikasi::where('kolam_id', $kolam->kolam_id)
+                ->where('status', false)
+                ->latest('waktu')
+                ->take(5)
+                ->get();
+        }
 
         // Get historical data for charts (last 24 hours) - empty collection if no data
         $historicalData = collect();
 
-        return view('dashboard', compact('kolam', 'latestData', 'thresholds', 'notifikasis', 'historicalData'));
+        return view('dashboard', compact(
+            'kolam', 
+            'latestData', 
+            'thresholds', 
+            'notifikasis', 
+            'historicalData',
+            'monitoringSessions',
+            'selectedKapal',
+            'availableKapals',
+            'showKapalSelection'
+        ));
     }
 
     public function historiData(Request $request)
@@ -396,19 +472,61 @@ class UserController extends Controller
         return view('user.profil', compact('peternak'));
     }
 
-    public function priceTracker()
+    public function priceTracker(Request $request)
     {
-        // Dummy price data - in production, this would come from an API or database
-        $hargaUdang = [
-            ['ukuran' => 'Size 100 (10g)', 'harga' => 45000, 'perubahan' => '+2.3%', 'trend' => 'up'],
-            ['ukuran' => 'Size 80 (12.5g)', 'harga' => 52000, 'perubahan' => '+1.8%', 'trend' => 'up'],
-            ['ukuran' => 'Size 60 (16.7g)', 'harga' => 58000, 'perubahan' => '-0.5%', 'trend' => 'down'],
-            ['ukuran' => 'Size 50 (20g)', 'harga' => 65000, 'perubahan' => '+3.1%', 'trend' => 'up'],
-            ['ukuran' => 'Size 40 (25g)', 'harga' => 72000, 'perubahan' => '+1.2%', 'trend' => 'up'],
-            ['ukuran' => 'Size 30 (33.3g)', 'harga' => 85000, 'perubahan' => '+4.5%', 'trend' => 'up'],
-        ];
+        $forceRefresh = $request->get('refresh') === '1';
         
-        return view('user.price-tracker', compact('hargaUdang'));
+        // Try to get from cache first (unless force refresh)
+        if (!$forceRefresh) {
+            $cachedData = Cache::get('harga_udang_vaname');
+            if ($cachedData) {
+                return view('user.price-tracker', [
+                    'hargaUdang' => $cachedData['data'],
+                    'lastUpdate' => $cachedData['last_update'],
+                    'source' => $cachedData['source'] ?? 'Cache',
+                ]);
+            }
+        }
+        
+        // Fetch fresh data using service
+        $service = new PriceTrackerService();
+        $hargaUdang = $service->fetchHargaUdang();
+        
+        // Cache for 6 hours
+        Cache::put('harga_udang_vaname', [
+            'data' => $hargaUdang,
+            'last_update' => now(),
+            'source' => 'API',
+        ], now()->addHours(6));
+        
+        return view('user.price-tracker', [
+            'hargaUdang' => $hargaUdang,
+            'lastUpdate' => now(),
+            'source' => 'API',
+        ]);
+    }
+
+    public function refreshPriceTracker()
+    {
+        // Clear cache and fetch fresh data
+        Cache::forget('harga_udang_vaname');
+        
+        $service = new PriceTrackerService();
+        $hargaUdang = $service->fetchHargaUdang();
+        
+        // Cache for 6 hours
+        Cache::put('harga_udang_vaname', [
+            'data' => $hargaUdang,
+            'last_update' => now(),
+            'source' => 'API',
+        ], now()->addHours(6));
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Data harga berhasil diperbarui',
+            'data' => $hargaUdang,
+            'last_update' => now()->format('d M Y H:i'),
+        ]);
     }
 
 
@@ -462,6 +580,39 @@ class UserController extends Controller
                 ->where('is_active', true)
                 ->get();
             
+            // Auto-stop sessions that have exceeded 24 hours
+            foreach ($sessions as $session) {
+                $maxDuration = 86400; // 24 hours in seconds
+                $startTime = $session->mulai_monitoring;
+                
+                if ($startTime) {
+                    $elapsedSeconds = now()->diffInSeconds($startTime);
+                    
+                    if ($elapsedSeconds >= $maxDuration) {
+                        // Auto-stop the session
+                        $session->update([
+                            'is_active' => false,
+                            'selesai_monitoring' => now(),
+                        ]);
+                        
+                        // Update kapal status if no other active sessions
+                        $otherActiveSessions = MonitoringSession::where('nama_kapal', $kapal->robot_id)
+                            ->where('is_active', true)
+                            ->where('session_id', '!=', $session->session_id)
+                            ->count();
+                        
+                        if ($otherActiveSessions == 0) {
+                            $kapal->update(['status' => 'idle']);
+                        }
+                    }
+                }
+            }
+            
+            // Get active sessions again after auto-stop
+            $sessions = MonitoringSession::where('nama_kapal', $kapal->robot_id)
+                ->where('is_active', true)
+                ->get();
+            
             $kapalActiveSessions[$kapal->robot_id] = $sessions;
             
             $kapalStats[$kapal->robot_id] = [
@@ -482,12 +633,36 @@ class UserController extends Controller
         // Get available kolams for the peternak
         $availableKolams = DashboardMonitoring::where('email_peternak', $email)->get();
         
+        // Get next valid umur_budidaya for each kolam
+        $kolamNextUmur = [];
+        $validUmurSequence = [1, 7, 14, 21, 28, 35, 42, 49, 56, 63, 70, 77, 84, 91, 98];
+        
+        foreach ($availableKolams as $kolam) {
+            $allSessionsForKolam = MonitoringSession::where('kolam_id', $kolam->kolam_id)
+                ->orderBy('umur_budidaya', 'desc')
+                ->get();
+            
+            if ($allSessionsForKolam->count() > 0) {
+                $maxCompletedUmur = $allSessionsForKolam->max('umur_budidaya');
+                $currentIndex = array_search($maxCompletedUmur, $validUmurSequence);
+                
+                if ($currentIndex !== false && $currentIndex < count($validUmurSequence) - 1) {
+                    $kolamNextUmur[$kolam->kolam_id] = $validUmurSequence[$currentIndex + 1];
+                } else {
+                    $kolamNextUmur[$kolam->kolam_id] = null; // All completed
+                }
+            } else {
+                $kolamNextUmur[$kolam->kolam_id] = 1; // Start from day 1
+            }
+        }
+        
         return view('user.manajemen-kapal', compact(
             'kapals',
             'kapalStats',
             'kapalActiveSessions',
             'kapalMonitoredCombinations',
-            'availableKolams'
+            'availableKolams',
+            'kolamNextUmur'
         ));
     }
 
@@ -510,6 +685,184 @@ class UserController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Kapal berhasil ditambahkan',
+        ]);
+    }
+
+    public function mulaiMonitoring(Request $request)
+    {
+        $request->validate([
+            'nama_kapal' => 'required|string',
+            'kolam_id' => 'required|string',
+            'umur_budidaya' => 'required|integer',
+            'threshold_suhu_min' => 'nullable|numeric',
+            'threshold_suhu_max' => 'nullable|numeric',
+            'threshold_ph_min' => 'nullable|numeric',
+            'threshold_ph_max' => 'nullable|numeric',
+            'threshold_oksigen_min' => 'nullable|numeric',
+            'threshold_oksigen_max' => 'nullable|numeric',
+            'threshold_salinitas_min' => 'nullable|numeric',
+            'threshold_salinitas_max' => 'nullable|numeric',
+            'timer_monitoring' => 'nullable|string',
+        ]);
+
+        $email = session('user_email', 'dummy@example.com');
+        $namaKapal = $request->nama_kapal;
+        $kolamId = $request->kolam_id;
+        $umurBudidaya = $request->umur_budidaya;
+
+        // Verify kapal exists and belongs to user
+        $kapal = RobotKapalEshrimp::where('robot_id', $namaKapal)
+            ->where('email_peternak', $email)
+            ->first();
+
+        if (!$kapal) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Kapal tidak ditemukan atau tidak memiliki akses',
+            ], 404);
+        }
+
+        // Verify kolam exists and belongs to user
+        $kolam = DashboardMonitoring::where('kolam_id', $kolamId)
+            ->where('email_peternak', $email)
+            ->first();
+
+        if (!$kolam) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Kolam tidak ditemukan atau tidak memiliki akses',
+            ], 404);
+        }
+
+        // Check if kapal already has an active monitoring session
+        $activeSession = MonitoringSession::where('nama_kapal', $namaKapal)
+            ->where('is_active', true)
+            ->first();
+
+        if ($activeSession) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Kapal sudah memiliki monitoring session aktif. Hentikan monitoring yang sedang berjalan terlebih dahulu.',
+            ], 400);
+        }
+
+        // Validate sequential umur_budidaya for this kolam
+        // Get all completed sessions for this kolam (both active and inactive)
+        $allSessionsForKolam = MonitoringSession::where('kolam_id', $kolamId)
+            ->orderBy('umur_budidaya', 'desc')
+            ->get();
+
+        // Define valid umur_budidaya sequence
+        $validUmurSequence = [1, 7, 14, 21, 28, 35, 42, 49, 56, 63, 70, 77, 84, 91, 98];
+
+        if ($allSessionsForKolam->count() > 0) {
+            // Get the maximum umur_budidaya that has been completed for this kolam
+            $maxCompletedUmur = $allSessionsForKolam->max('umur_budidaya');
+            
+            // Find the next valid umur_budidaya in sequence
+            $currentIndex = array_search($maxCompletedUmur, $validUmurSequence);
+            
+            if ($currentIndex !== false && $currentIndex < count($validUmurSequence) - 1) {
+                $nextValidUmur = $validUmurSequence[$currentIndex + 1];
+                
+                // Check if user is trying to skip days
+                $requestedIndex = array_search($umurBudidaya, $validUmurSequence);
+                
+                if ($requestedIndex === false) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Umur budidaya hari ke-{$umurBudidaya} tidak valid. Pilih dari urutan yang tersedia.",
+                    ], 400);
+                }
+                
+                // User must continue from the next valid umur (cannot skip)
+                if ($requestedIndex > $currentIndex + 1) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Anda tidak dapat melompati hari. Kolam {$kolamId} sudah selesai monitoring hingga hari ke-{$maxCompletedUmur}. Silakan lanjutkan dengan hari ke-{$nextValidUmur} terlebih dahulu.",
+                    ], 400);
+                }
+                
+                // User cannot go back to previous days
+                if ($requestedIndex <= $currentIndex) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Kolam {$kolamId} sudah pernah monitoring hari ke-{$umurBudidaya}. Silakan lanjutkan dengan hari ke-{$nextValidUmur}.",
+                    ], 400);
+                }
+            } else {
+                // All days have been completed
+                return response()->json([
+                    'success' => false,
+                    'message' => "Kolam {$kolamId} sudah menyelesaikan semua tahap monitoring.",
+                ], 400);
+            }
+        } else {
+            // First monitoring for this kolam - must start from day 1
+            if ($umurBudidaya != 1) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Monitoring untuk kolam {$kolamId} harus dimulai dari hari ke-1.",
+                ], 400);
+            }
+        }
+
+        // Prepare threshold data as JSON strings
+        $thresholdSuhu = null;
+        if ($request->threshold_suhu_min !== null || $request->threshold_suhu_max !== null) {
+            $thresholdSuhu = json_encode([
+                'min' => $request->threshold_suhu_min,
+                'max' => $request->threshold_suhu_max,
+            ]);
+        }
+
+        $thresholdPh = null;
+        if ($request->threshold_ph_min !== null || $request->threshold_ph_max !== null) {
+            $thresholdPh = json_encode([
+                'min' => $request->threshold_ph_min,
+                'max' => $request->threshold_ph_max,
+            ]);
+        }
+
+        $thresholdOksigen = null;
+        if ($request->threshold_oksigen_min !== null || $request->threshold_oksigen_max !== null) {
+            $thresholdOksigen = json_encode([
+                'min' => $request->threshold_oksigen_min,
+                'max' => $request->threshold_oksigen_max,
+            ]);
+        }
+
+        $thresholdSalinitas = null;
+        if ($request->threshold_salinitas_min !== null || $request->threshold_salinitas_max !== null) {
+            $thresholdSalinitas = json_encode([
+                'min' => $request->threshold_salinitas_min,
+                'max' => $request->threshold_salinitas_max,
+            ]);
+        }
+
+        // Create monitoring session
+        $session = MonitoringSession::create([
+            'kolam_id' => $kolamId,
+            'nama_kapal' => $namaKapal,
+            'umur_budidaya' => $umurBudidaya,
+            'threshold_suhu' => $thresholdSuhu,
+            'threshold_ph' => $thresholdPh,
+            'threshold_oksigen' => $thresholdOksigen,
+            'threshold_salinitas' => $thresholdSalinitas,
+            'timer_monitoring' => $request->timer_monitoring ?? '10',
+            'mulai_monitoring' => now(),
+            'is_active' => true,
+            'is_paused' => false,
+            'total_paused_seconds' => 0,
+        ]);
+
+        // Update kapal status to active
+        $kapal->update(['status' => 'active']);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Monitoring berhasil dimulai',
+            'session_id' => $session->session_id,
         ]);
     }
 
@@ -660,6 +1013,595 @@ class UserController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Kolam berhasil dihapus',
+        ]);
+    }
+
+    public function simulateRealtimeData(Request $request)
+    {
+        $request->validate([
+            'kolam_id' => 'required|string',
+            'umur_budidaya' => 'required|integer',
+            'session_id' => 'required|integer',
+        ]);
+
+        $sessionId = $request->session_id;
+        $kolamId = $request->kolam_id;
+        $umurBudidaya = $request->umur_budidaya;
+
+        // Get monitoring session
+        $session = MonitoringSession::find($sessionId);
+        
+        if (!$session) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Monitoring session tidak ditemukan',
+            ], 404);
+        }
+
+        // Check if session is paused
+        if ($session->is_paused) {
+            return response()->json([
+                'success' => false,
+                'paused' => true,
+                'message' => 'Monitoring session sedang di-pause',
+            ]);
+        }
+
+        // Check if session is expired (24 hours)
+        $startTime = $session->mulai_monitoring;
+        $maxDuration = 86400; // 24 hours in seconds
+        
+        if ($startTime) {
+            $totalElapsed = now()->diffInSeconds($startTime);
+            $pausedSeconds = $session->total_paused_seconds ?? 0;
+            $activeSeconds = max(0, $totalElapsed - $pausedSeconds);
+            
+            if ($activeSeconds >= $maxDuration) {
+                // Mark session as inactive
+                $session->update([
+                    'is_active' => false,
+                    'selesai_monitoring' => now(),
+                ]);
+                
+                return response()->json([
+                    'success' => false,
+                    'expired' => true,
+                    'message' => 'Monitoring session telah berakhir (24 jam)',
+                ]);
+            }
+        }
+
+        // Check if session is still active
+        if (!$session->is_active) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Monitoring session tidak aktif',
+            ], 400);
+        }
+
+        // Get robot_id from session
+        $robotId = $session->nama_kapal;
+
+        // Generate realistic sensor data based on umur_budidaya
+        // Base values change based on cultivation age
+        $baseValues = $this->getBaseSensorValues($umurBudidaya);
+        
+        // Add some random variation (±5%)
+        $sensorData = [
+            'ph' => round($baseValues['ph'] + (rand(-50, 50) / 1000), 2),
+            'suhu' => round($baseValues['suhu'] + (rand(-50, 50) / 100), 1),
+            'oksigen' => round($baseValues['oksigen'] + (rand(-30, 30) / 100), 2),
+            'salinitas' => round($baseValues['salinitas'] + (rand(-20, 20) / 100), 1),
+        ];
+
+        // Ensure values are within realistic ranges
+        $sensorData['ph'] = max(6.5, min(9.0, $sensorData['ph']));
+        $sensorData['suhu'] = max(24.0, min(35.0, $sensorData['suhu']));
+        $sensorData['oksigen'] = max(4.0, min(10.0, $sensorData['oksigen']));
+        $sensorData['salinitas'] = max(10.0, min(30.0, $sensorData['salinitas']));
+
+        // Determine kualitas_air based on values
+        $sensorData['kualitas_air'] = $this->determineKualitasAir($sensorData);
+
+        // Save sensor data to database
+        SensorData::create([
+            'robot_id' => $robotId,
+            'kolam_id' => $kolamId,
+            'umur_budidaya' => $umurBudidaya,
+            'waktu' => now(),
+            'ph' => $sensorData['ph'],
+            'suhu' => $sensorData['suhu'],
+            'oksigen' => $sensorData['oksigen'],
+            'salinitas' => $sensorData['salinitas'],
+            'kualitas_air' => $sensorData['kualitas_air'],
+        ]);
+
+        // Check thresholds and create notifications if exceeded
+        $notifications = $this->checkThresholdsAndNotify($session, $sensorData, $kolamId);
+
+        return response()->json([
+            'success' => true,
+            'data' => array_merge($sensorData, [
+                'waktu' => now()->toIso8601String(),
+            ]),
+            'notifications' => $notifications,
+        ]);
+    }
+
+    private function getBaseSensorValues($umurBudidaya)
+    {
+        // Base values that change slightly based on cultivation age
+        // Early days: more stable, optimal conditions
+        // Later days: slight variations as shrimp grow
+        
+        $dayFactor = min($umurBudidaya / 100, 1.0); // Normalize to 0-1
+        
+        return [
+            'ph' => 7.5 + ($dayFactor * 0.3), // 7.5 to 7.8
+            'suhu' => 28.0 + ($dayFactor * 1.5), // 28 to 29.5
+            'oksigen' => 6.5 - ($dayFactor * 0.5), // 6.5 to 6.0 (slightly decreases)
+            'salinitas' => 15.0 + ($dayFactor * 3.0), // 15 to 18
+        ];
+    }
+
+    private function determineKualitasAir($sensorData)
+    {
+        $ph = $sensorData['ph'];
+        $suhu = $sensorData['suhu'];
+        $oksigen = $sensorData['oksigen'];
+        $salinitas = $sensorData['salinitas'];
+
+        $score = 0;
+        
+        // pH check (optimal: 7.0-8.5)
+        if ($ph >= 7.0 && $ph <= 8.5) {
+            $score += 25;
+        } elseif ($ph >= 6.5 && $ph < 7.0 || $ph > 8.5 && $ph <= 9.0) {
+            $score += 15;
+        } else {
+            $score += 5;
+        }
+
+        // Suhu check (optimal: 26-32)
+        if ($suhu >= 26 && $suhu <= 32) {
+            $score += 25;
+        } elseif ($suhu >= 24 && $suhu < 26 || $suhu > 32 && $suhu <= 35) {
+            $score += 15;
+        } else {
+            $score += 5;
+        }
+
+        // Oksigen check (optimal: 5-8)
+        if ($oksigen >= 5 && $oksigen <= 8) {
+            $score += 25;
+        } elseif ($oksigen >= 4 && $oksigen < 5 || $oksigen > 8 && $oksigen <= 10) {
+            $score += 15;
+        } else {
+            $score += 5;
+        }
+
+        // Salinitas check (optimal: 15-25)
+        if ($salinitas >= 15 && $salinitas <= 25) {
+            $score += 25;
+        } elseif ($salinitas >= 10 && $salinitas < 15 || $salinitas > 25 && $salinitas <= 30) {
+            $score += 15;
+        } else {
+            $score += 5;
+        }
+
+        if ($score >= 90) return 'Sangat Baik';
+        if ($score >= 70) return 'Baik';
+        if ($score >= 50) return 'Cukup';
+        return 'Buruk';
+    }
+
+    private function checkThresholdsAndNotify($session, $sensorData, $kolamId)
+    {
+        $notifications = [];
+
+        // Get thresholds from session (stored as JSON strings)
+        $thresholds = [
+            'ph' => $this->parseThreshold($session->threshold_ph),
+            'suhu' => $this->parseThreshold($session->threshold_suhu),
+            'oksigen' => $this->parseThreshold($session->threshold_oksigen),
+            'salinitas' => $this->parseThreshold($session->threshold_salinitas),
+        ];
+
+        // Check each sensor
+        foreach ($thresholds as $sensorKey => $threshold) {
+            if (!$threshold) continue;
+
+            $value = $sensorData[$sensorKey];
+            $min = $threshold['min'] ?? null;
+            $max = $threshold['max'] ?? null;
+
+            $exceeded = false;
+            $message = '';
+
+            if ($min !== null && $value < $min) {
+                $exceeded = true;
+                $message = ucfirst($sensorKey) . " ({$value}) di bawah batas minimal ({$min})";
+            } elseif ($max !== null && $value > $max) {
+                $exceeded = true;
+                $message = ucfirst($sensorKey) . " ({$value}) melebihi batas maksimal ({$max})";
+            }
+
+            if ($exceeded) {
+                // Create notification with kapal name
+                $namaKapal = $session->nama_kapal ?? 'Unknown';
+                $messageWithKapal = "[{$namaKapal}] " . $message;
+                
+                Notifikasi::create([
+                    'kolam_id' => $kolamId,
+                    'nama_kapal' => $namaKapal,
+                    'pesan' => $messageWithKapal,
+                    'waktu' => now(),
+                    'status' => false, // unread
+                ]);
+
+                $notifications[] = [
+                    'message' => $messageWithKapal,
+                    'type' => $sensorKey,
+                ];
+            }
+        }
+
+        return $notifications;
+    }
+
+    private function parseThreshold($thresholdJson)
+    {
+        if (!$thresholdJson) return null;
+        
+        $decoded = json_decode($thresholdJson, true);
+        if (!$decoded || !is_array($decoded)) return null;
+        
+        return [
+            'min' => $decoded['min'] ?? null,
+            'max' => $decoded['max'] ?? null,
+        ];
+    }
+
+    public function getSensorData(Request $request)
+    {
+        $request->validate([
+            'kolam_id' => 'required|string',
+            'limit' => 'nullable|integer|max:100',
+        ]);
+
+        $limit = $request->get('limit', 20);
+        $kolamId = $request->kolam_id;
+
+        $sensorData = SensorData::where('kolam_id', $kolamId)
+            ->latest('waktu')
+            ->limit($limit)
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'sensorData' => $sensorData,
+        ]);
+    }
+
+    public function getThresholds(Request $request)
+    {
+        $request->validate([
+            'kolam_id' => 'required|string',
+        ]);
+
+        $kolamId = $request->kolam_id;
+
+        $thresholds = Threshold::where('kolam_id', $kolamId)->get();
+
+        $formatted = [];
+        foreach ($thresholds as $threshold) {
+            $formatted[$threshold->sensor_tipe] = [
+                'nilai' => $threshold->nilai,
+                'updated_at' => $threshold->timer ?? $threshold->updated_at,
+            ];
+        }
+
+        return response()->json([
+            'success' => true,
+            'thresholds' => $formatted,
+        ]);
+    }
+
+    public function getNotifications(Request $request)
+    {
+        $kolamId = $request->get('kolam_id');
+        
+        $query = Notifikasi::query();
+        
+        if ($kolamId) {
+            $query->where('kolam_id', $kolamId);
+        }
+        
+        $notifications = $query->latest('waktu')
+            ->limit(50)
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'notifications' => $notifications,
+        ]);
+    }
+
+    public function deleteNotification($notificationId)
+    {
+        $notification = Notifikasi::find($notificationId);
+        
+        if (!$notification) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Notifikasi tidak ditemukan',
+            ], 404);
+        }
+
+        $notification->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Notifikasi berhasil dihapus',
+        ]);
+    }
+
+    public function clearAllNotifications(Request $request)
+    {
+        $kolamId = $request->get('kolam_id');
+        
+        $query = Notifikasi::query();
+        
+        if ($kolamId) {
+            $query->where('kolam_id', $kolamId);
+        }
+        
+        $query->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Semua notifikasi berhasil dihapus',
+        ]);
+    }
+
+    public function createNotification(Request $request)
+    {
+        $request->validate([
+            'kolam_id' => 'required|string',
+            'pesan' => 'required|string',
+            'nama_kapal' => 'nullable|string',
+        ]);
+
+        $pesan = $request->pesan;
+        if ($request->nama_kapal) {
+            $pesan = "[{$request->nama_kapal}] " . $pesan;
+        }
+
+        $notification = Notifikasi::create([
+            'kolam_id' => $request->kolam_id,
+            'nama_kapal' => $request->nama_kapal,
+            'pesan' => $pesan,
+            'waktu' => now(),
+            'status' => false, // unread
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Notifikasi berhasil dibuat',
+            'notification' => $notification,
+        ]);
+    }
+
+    public function deleteMonitoringSession($sessionId)
+    {
+        $email = session('user_email', 'dummy@example.com');
+        
+        // Find the monitoring session
+        $session = MonitoringSession::find($sessionId);
+        
+        if (!$session) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Monitoring session tidak ditemukan',
+            ], 404);
+        }
+        
+        // Verify the session belongs to user's kapal
+        $kapal = RobotKapalEshrimp::where('robot_id', $session->nama_kapal)
+            ->where('email_peternak', $email)
+            ->first();
+        
+        if (!$kapal) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Anda tidak memiliki akses untuk menghapus session ini',
+            ], 403);
+        }
+        
+        // Update session to inactive
+        $session->update([
+            'is_active' => false,
+            'selesai_monitoring' => now(),
+        ]);
+        
+        // Check if kapal has any other active sessions
+        $otherActiveSessions = MonitoringSession::where('nama_kapal', $session->nama_kapal)
+            ->where('is_active', true)
+            ->where('session_id', '!=', $sessionId)
+            ->count();
+        
+        // If no other active sessions, set kapal status to idle
+        if ($otherActiveSessions == 0) {
+            $kapal->update(['status' => 'idle']);
+        }
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Monitoring session berhasil dihentikan',
+        ]);
+    }
+
+    public function getMonitoringSessionDetail($sessionId)
+    {
+        $email = session('user_email', 'dummy@example.com');
+        
+        $session = MonitoringSession::find($sessionId);
+        
+        if (!$session) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Monitoring session tidak ditemukan',
+            ], 404);
+        }
+        
+        // Verify the session belongs to user's kapal
+        $kapal = RobotKapalEshrimp::where('robot_id', $session->nama_kapal)
+            ->where('email_peternak', $email)
+            ->first();
+        
+        if (!$kapal) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Anda tidak memiliki akses untuk melihat session ini',
+            ], 403);
+        }
+        
+        return response()->json([
+            'success' => true,
+            'session' => $session,
+        ]);
+    }
+
+    public function pauseMonitoringSession($sessionId)
+    {
+        $email = session('user_email', 'dummy@example.com');
+        
+        $session = MonitoringSession::find($sessionId);
+        
+        if (!$session) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Monitoring session tidak ditemukan',
+            ], 404);
+        }
+        
+        // Verify the session belongs to user's kapal
+        $kapal = RobotKapalEshrimp::where('robot_id', $session->nama_kapal)
+            ->where('email_peternak', $email)
+            ->first();
+        
+        if (!$kapal) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Anda tidak memiliki akses untuk pause session ini',
+            ], 403);
+        }
+        
+        if ($session->is_paused) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Session sudah dalam status pause',
+            ], 400);
+        }
+        
+        $session->update([
+            'is_paused' => true,
+            'paused_at' => now(),
+        ]);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Monitoring session berhasil di-pause',
+        ]);
+    }
+
+    public function resumeMonitoringSession($sessionId)
+    {
+        $email = session('user_email', 'dummy@example.com');
+        
+        $session = MonitoringSession::find($sessionId);
+        
+        if (!$session) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Monitoring session tidak ditemukan',
+            ], 404);
+        }
+        
+        // Verify the session belongs to user's kapal
+        $kapal = RobotKapalEshrimp::where('robot_id', $session->nama_kapal)
+            ->where('email_peternak', $email)
+            ->first();
+        
+        if (!$kapal) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Anda tidak memiliki akses untuk resume session ini',
+            ], 403);
+        }
+        
+        if (!$session->is_paused) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Session tidak dalam status pause',
+            ], 400);
+        }
+        
+        // Calculate paused duration
+        $pausedAt = $session->paused_at ?? now();
+        $pausedSeconds = now()->diffInSeconds($pausedAt);
+        $totalPausedSeconds = ($session->total_paused_seconds ?? 0) + $pausedSeconds;
+        
+        $session->update([
+            'is_paused' => false,
+            'resumed_at' => now(),
+            'total_paused_seconds' => $totalPausedSeconds,
+        ]);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Monitoring session berhasil di-resume',
+        ]);
+    }
+
+    public function restartMonitoringSession($sessionId)
+    {
+        $email = session('user_email', 'dummy@example.com');
+        
+        $session = MonitoringSession::find($sessionId);
+        
+        if (!$session) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Monitoring session tidak ditemukan',
+            ], 404);
+        }
+        
+        // Verify the session belongs to user's kapal
+        $kapal = RobotKapalEshrimp::where('robot_id', $session->nama_kapal)
+            ->where('email_peternak', $email)
+            ->first();
+        
+        if (!$kapal) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Anda tidak memiliki akses untuk restart session ini',
+            ], 403);
+        }
+        
+        $session->update([
+            'is_active' => true,
+            'is_paused' => false,
+            'mulai_monitoring' => now(),
+            'selesai_monitoring' => null,
+            'paused_at' => null,
+            'resumed_at' => null,
+            'total_paused_seconds' => 0,
+        ]);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Monitoring session berhasil di-restart',
         ]);
     }
 }

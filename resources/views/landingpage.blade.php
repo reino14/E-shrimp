@@ -7,6 +7,11 @@
 	<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 	@vite(['resources/css/app.css','resources/js/app.js'])
 </head>
+<style>
+	html {
+    scroll-behavior: smooth;
+	}
+</style>
 <body class="antialiased text-zinc-800 bg-white">
 	<header class="sticky top-0 z-30 bg-white/80 backdrop-blur border-b border-zinc-200">
 		<div class="mx-auto max-w-7xl px-4 sm:px-6 py-4 flex items-center justify-between">
@@ -42,8 +47,8 @@
 						Real‑time pond metrics, anomaly alerts, and insights to maximize growth and reduce risk—powered by our IoT monitoring boat and integrated dashboard.
 					</p>
 					<div class="flex flex-wrap gap-3">
-						<button class="px-5 py-2 rounded-full bg-zinc-900 text-white hover:bg-zinc-800 text-sm">Request Demo</button>
-						<button class="px-5 py-2 rounded-full border border-zinc-300 hover:bg-zinc-50 text-sm">Learn More</button>
+						<a href="#order"><button class="px-5 py-2 rounded-full bg-zinc-900 text-white hover:bg-zinc-800 text-sm">Order Now!</button></a>
+						<a href="#features"><button class="px-5 py-2 rounded-full border border-zinc-300 hover:bg-zinc-50 text-sm">Learn More</button></a>
 					</div>
 					<div class="flex items-center gap-6 pt-2 text-sm text-zinc-600">
 						<div><span class="font-semibold text-zinc-900">Version</span> 1.0</div>
@@ -188,7 +193,7 @@
 			</div>
 		</section>
 
-		<section class="py-12 sm:py-16 bg-zinc-50">
+		<section id="order" class="py-12 sm:py-16 bg-zinc-50">
 			<div class="mx-auto max-w-7xl px-4 sm:px-6 grid lg:grid-cols-2 gap-10 items-center">
 				<div class="aspect-[4/3] rounded-2xl overflow-hidden shadow-lg">
 					<img src="/image/shrimp farm.png" alt="Happy farmer" class="w-full h-full object-cover">
@@ -197,7 +202,7 @@
 					<h3 class="text-2xl sm:text-3xl font-semibold">Order Now <span class="text-zinc-500 font-normal">Your E‑shrimp System</span></h3>
 					<p class="text-zinc-600 mt-3">Bring automation and data‑driven decisions to your farm.</p>
 					<div class="mt-6">
-						<button class="px-5 py-2 rounded-full bg-zinc-900 text-white hover:bg-zinc-800 text-sm">Contact Sales</button>
+						<a href="https://wa.me/6285694014009"><button class="px-5 py-2 rounded-full bg-zinc-900 text-white hover:bg-zinc-800 text-sm">Contact Sales</button></a>
 					</div>
 				</div>
 			</div>

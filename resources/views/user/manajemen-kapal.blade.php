@@ -184,18 +184,28 @@
 											$maxDuration = 86400; // 24 hours in seconds
 											$startTime = $session->mulai_monitoring;
 											
-											// Calculate elapsed time: time since start
-											$elapsedSeconds = $startTime ? now()->diffInSeconds($startTime) : 0;
+											// Calculate elapsed time: time since start (always positive)
+											if ($startTime) {
+												$elapsedSeconds = abs(now()->diffInSeconds($startTime));
+											} else {
+												$elapsedSeconds = 0;
+											}
 											
 											// Remaining = 24 hours - elapsed (countdown)
-											$remainingSeconds = max(0, $maxDuration - $elapsedSeconds);
+											// Cap at maxDuration to prevent negative or excessive values
+											$remainingSeconds = max(0, min($maxDuration, $maxDuration - $elapsedSeconds));
+											
+											// If session has exceeded 24 hours, mark it for auto-stop
+											if ($elapsedSeconds >= $maxDuration) {
+												$remainingSeconds = 0;
+											}
 											
 											$hours = floor($remainingSeconds / 3600);
 											$minutes = floor(($remainingSeconds % 3600) / 60);
 											$seconds = $remainingSeconds % 60;
 											$durationText = sprintf('%02d:%02d:%02d', $hours, $minutes, $seconds);
 										@endphp
-										<div class="bg-zinc-50 rounded-lg p-3 border border-zinc-200">
+										<div class="bg-zinc-50 rounded-lg p-3 border border-zinc-200 relative" style="pointer-events: auto; position: relative;">
 											<div class="flex items-center justify-between mb-2">
 												<div class="text-xs">
 													<div class="font-semibold">{{ $session->kolam_id }} - Hari ke-{{ $session->umur_budidaya }}</div>
@@ -203,8 +213,15 @@
 												</div>
 												<span class="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded">▶ Aktif</span>
 											</div>
-											<div class="flex gap-1">
-												<button onclick="stopMonitoringSession('{{ $kapal->robot_id }}', {{ $session->session_id }})" class="flex-1 text-xs px-2 py-1 rounded border border-red-300 hover:bg-red-50 text-red-600">
+											<div class="flex gap-1 mt-2" style="position: relative; z-index: 20;">
+												<button 
+													type="button"
+													data-session-id="{{ $session->session_id }}"
+													data-kapal-id="{{ $kapal->robot_id }}"
+													onclick="event.stopPropagation(); event.preventDefault(); stopMonitoringSession('{{ $kapal->robot_id }}', {{ $session->session_id }}); return false;" 
+													class="stop-monitoring-btn flex-1 text-xs px-2 py-1 rounded border border-red-300 hover:bg-red-50 active:bg-red-100 text-red-600 cursor-pointer transition-colors"
+													style="pointer-events: auto !important; touch-action: manipulation; position: relative; z-index: 30;"
+												>
 													⏹ Berhenti
 												</button>
 											</div>
@@ -452,6 +469,15 @@
 		const allKapalMonitoredCombinations = {};
 	@endif
 
+	// Store next valid umur for each kolam
+	@if(isset($kolamNextUmur))
+		const kolamNextUmur = @json($kolamNextUmur);
+	@else
+		const kolamNextUmur = {};
+	@endif
+
+	const validUmurSequence = [1, 7, 14, 21, 28, 35, 42, 49, 56, 63, 70, 77, 84, 91, 98];
+
 	let currentKapalIdForValidation = null;
 
 	function openMulaiMonitoringModal(kapalId) {
@@ -459,6 +485,71 @@
 		document.getElementById('modalNamaKapal').value = kapalId;
 		document.getElementById('modalKapalDisplay').textContent = kapalId;
 		document.getElementById('modalMulaiMonitoring').classList.remove('hidden');
+		
+		// Reset form
+		document.getElementById('kolamInput').value = '';
+		document.getElementById('umurBudidayaSelect').value = '';
+		updateUmurOptions();
+	}
+
+	// Update umur budidaya options based on selected kolam
+	function updateUmurOptions() {
+		const kolamInput = document.getElementById('kolamInput');
+		const umurSelect = document.getElementById('umurBudidayaSelect');
+		const umurError = document.getElementById('umurBudidayaError');
+		
+		if (!kolamInput || !umurSelect) return;
+		
+		const selectedKolam = kolamInput.value.trim();
+		const nextValidUmur = kolamNextUmur[selectedKolam];
+		
+		// Clear all options except the first one
+		umurSelect.innerHTML = '<option value="">Pilih hari ke-</option>';
+		
+		if (!selectedKolam) {
+			// No kolam selected, show all options
+			validUmurSequence.forEach(umur => {
+				const option = document.createElement('option');
+				option.value = umur;
+				option.textContent = `Hari ke-${umur}`;
+				umurSelect.appendChild(option);
+			});
+			umurError.classList.add('hidden');
+			umurSelect.setCustomValidity('');
+			return;
+		}
+		
+		if (nextValidUmur === null) {
+			// All days completed for this kolam
+			umurError.classList.remove('hidden');
+			umurError.textContent = `Kolam ${selectedKolam} sudah menyelesaikan semua tahap monitoring.`;
+			umurSelect.setCustomValidity('Kolam ini sudah menyelesaikan semua tahap');
+			return;
+		}
+		
+		// Show only the next valid umur and future umurs
+		const nextIndex = validUmurSequence.indexOf(nextValidUmur);
+		if (nextIndex !== -1) {
+			validUmurSequence.slice(nextIndex).forEach(umur => {
+				const option = document.createElement('option');
+				option.value = umur;
+				option.textContent = `Hari ke-${umur}`;
+				if (umur === nextValidUmur) {
+					option.selected = true; // Auto-select the next valid umur
+					option.style.fontWeight = 'bold';
+				}
+				umurSelect.appendChild(option);
+			});
+			
+			// Show hint
+			umurError.classList.remove('hidden');
+			umurError.style.color = '#059669'; // Green color
+			umurError.textContent = `Kolam ${selectedKolam} harus melanjutkan dari hari ke-${nextValidUmur}.`;
+		} else {
+			umurError.classList.add('hidden');
+		}
+		
+		validateCombination();
 	}
 
 	// Setup validation on modal open
@@ -473,7 +564,8 @@
 				
 				const monitoredCombinations = allKapalMonitoredCombinations[currentKapalIdForValidation] || {};
 				const selectedKolam = kolamInput.value.trim();
-				const selectedUmur = umurSelect.value;
+				const selectedUmur = parseInt(umurSelect.value);
+				const nextValidUmur = kolamNextUmur[selectedKolam];
 				
 				if (!selectedKolam || !selectedUmur) {
 					umurError.classList.add('hidden');
@@ -481,18 +573,54 @@
 					return;
 				}
 				
+				// Check if this combination has been used before
 				const combinationKey = selectedKolam + '-' + selectedUmur;
 				if (monitoredCombinations[combinationKey]) {
 					umurError.classList.remove('hidden');
+					umurError.style.color = '#dc2626'; // Red color
 					umurError.textContent = `Kapal ${currentKapalIdForValidation} sudah pernah monitoring kolam ${selectedKolam} pada hari ke-${selectedUmur}. Pilih kolam lain atau umur budidaya yang berbeda.`;
 					umurSelect.setCustomValidity('Kombinasi kolam dan umur budidaya ini sudah pernah digunakan');
-				} else {
-					umurError.classList.add('hidden');
-					umurSelect.setCustomValidity('');
+					return;
 				}
+				
+				// Check sequential validation
+				if (nextValidUmur !== null && selectedUmur !== nextValidUmur) {
+					const selectedIndex = validUmurSequence.indexOf(selectedUmur);
+					const nextIndex = validUmurSequence.indexOf(nextValidUmur);
+					
+					if (selectedIndex === -1) {
+						umurError.classList.remove('hidden');
+						umurError.style.color = '#dc2626';
+						umurError.textContent = `Umur budidaya hari ke-${selectedUmur} tidak valid.`;
+						umurSelect.setCustomValidity('Umur budidaya tidak valid');
+						return;
+					}
+					
+					if (selectedIndex < nextIndex) {
+						umurError.classList.remove('hidden');
+						umurError.style.color = '#dc2626';
+						umurError.textContent = `Kolam ${selectedKolam} harus melanjutkan dari hari ke-${nextValidUmur}. Tidak dapat kembali ke hari sebelumnya.`;
+						umurSelect.setCustomValidity('Tidak dapat kembali ke hari sebelumnya');
+						return;
+					}
+					
+					if (selectedIndex > nextIndex) {
+						umurError.classList.remove('hidden');
+						umurError.style.color = '#dc2626';
+						umurError.textContent = `Kolam ${selectedKolam} harus melanjutkan dari hari ke-${nextValidUmur} terlebih dahulu. Tidak dapat melompati hari.`;
+						umurSelect.setCustomValidity('Tidak dapat melompati hari');
+						return;
+					}
+				}
+				
+				// Validation passed
+				umurError.classList.add('hidden');
+				umurSelect.setCustomValidity('');
 			}
 			
-			kolamInput.addEventListener('change', validateCombination);
+			kolamInput.addEventListener('change', function() {
+				updateUmurOptions();
+			});
 			umurSelect.addEventListener('change', validateCombination);
 		}
 	});
@@ -512,30 +640,58 @@
 	}
 
 	async function stopMonitoringSession(kapalId, sessionId) {
-		console.log('stopMonitoringSession called with:', kapalId, sessionId);
-		const result = await Swal.fire({
-			title: 'Konfirmasi',
-			text: 'Apakah Anda yakin ingin menghentikan monitoring session ini?',
-			icon: 'warning',
-			showCancelButton: true,
-			confirmButtonColor: '#dc2626',
-			cancelButtonColor: '#6b7280',
-			confirmButtonText: 'Ya, Hentikan',
-			cancelButtonText: 'Batal'
-		});
-		if (!result.isConfirmed) return;
-		
-		const csrfToken = document.querySelector('meta[name="csrf-token"]');
-		if (!csrfToken) {
-			Swal.fire({
-				icon: 'error',
-				title: 'Error',
-				text: 'CSRF token tidak ditemukan. Silakan refresh halaman.'
-			});
+		// Prevent multiple clicks
+		if (window['stopping_' + sessionId]) {
 			return;
 		}
+		window['stopping_' + sessionId] = true;
+		
+		console.log('stopMonitoringSession called with:', kapalId, sessionId);
+		
+		// Clear any timer intervals for this session
+		clearTimerInterval(sessionId, kapalId);
 		
 		try {
+			const confirmResult = await Swal.fire({
+				title: 'Konfirmasi',
+				text: 'Apakah Anda yakin ingin menghentikan monitoring session ini?',
+				icon: 'warning',
+				showCancelButton: true,
+				confirmButtonColor: '#dc2626',
+				cancelButtonColor: '#6b7280',
+				confirmButtonText: 'Ya, Hentikan',
+				cancelButtonText: 'Batal',
+				allowOutsideClick: false,
+				allowEscapeKey: true
+			});
+			
+			if (!confirmResult.isConfirmed) {
+				window['stopping_' + sessionId] = false;
+				return;
+			}
+			
+			const csrfToken = document.querySelector('meta[name="csrf-token"]');
+			if (!csrfToken) {
+				Swal.fire({
+					icon: 'error',
+					title: 'Error',
+					text: 'CSRF token tidak ditemukan. Silakan refresh halaman.'
+				});
+				window['stopping_' + sessionId] = false;
+				return;
+			}
+			
+			// Show loading
+			Swal.fire({
+				title: 'Memproses...',
+				text: 'Mohon tunggu',
+				allowOutsideClick: false,
+				allowEscapeKey: false,
+				didOpen: () => {
+					Swal.showLoading();
+				}
+			});
+			
 			const response = await fetch(`/monitoring-session/${sessionId}`, {
 				method: 'DELETE',
 				headers: {
@@ -545,18 +701,28 @@
 				},
 			});
 			
-			if (!response.ok) {
+			let responseResult;
+			try {
+				responseResult = await response.json();
+			} catch (e) {
 				const text = await response.text();
-				console.error('Response error:', text);
-				throw new Error(`HTTP error! status: ${response.status}`);
+				console.error('Response is not JSON:', text);
+				throw new Error(`Server error: ${response.status} ${response.statusText}`);
 			}
 			
-			const result = await response.json();
-			if (result.success) {
+			if (!response.ok) {
+				throw new Error(responseResult.message || `HTTP error! status: ${response.status}`);
+			}
+			
+			if (responseResult.success) {
+				// Clear all timers before reload
+				clearTimerInterval(sessionId, kapalId);
+				window['pageReloading'] = true;
+				
 				Swal.fire({
 					icon: 'success',
 					title: 'Berhasil',
-					text: 'Monitoring session berhasil dihapus',
+					text: 'Monitoring session berhasil dihentikan',
 					timer: 1500,
 					showConfirmButton: false
 				}).then(() => {
@@ -566,16 +732,18 @@
 				Swal.fire({
 					icon: 'error',
 					title: 'Gagal',
-					text: 'Gagal menghapus monitoring session: ' + (result.message || 'Unknown error')
+					text: 'Gagal menghapus monitoring session: ' + (responseResult.message || 'Unknown error')
 				});
+				window['stopping_' + sessionId] = false;
 			}
 		} catch (error) {
 			console.error('Error deleting session:', error);
 			Swal.fire({
 				icon: 'error',
 				title: 'Error',
-				text: 'Terjadi kesalahan saat menghapus monitoring session: ' + error.message
+				text: 'Terjadi kesalahan saat menghapus monitoring session: ' + (error.message || 'Unknown error')
 			});
+			window['stopping_' + sessionId] = false;
 		}
 	}
 
@@ -850,28 +1018,49 @@
 							const maxDuration = 86400; // 24 hours in seconds
 							
 							function updateTimer() {
+								// Check if session is being stopped
+								if (window['stopping_' + sessionId]) {
+									if (window[intervalKey]) {
+										clearInterval(window[intervalKey]);
+										delete window[intervalKey];
+									}
+									return;
+								}
+								
 								// Recalculate remaining time every second (more accurate)
-								const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
-								const remainingSeconds = Math.max(0, maxDuration - elapsedSeconds);
+								const now = Date.now();
+								const elapsedSeconds = Math.floor((now - startTime) / 1000);
+								
+								// Cap elapsed time to prevent negative or excessive values
+								const cappedElapsed = Math.max(0, Math.min(elapsedSeconds, maxDuration));
+								const remainingSeconds = Math.max(0, maxDuration - cappedElapsed);
+								
+								// Ensure hours never exceed 24
+								const hours = Math.min(23, Math.floor(remainingSeconds / 3600));
+								const minutes = Math.floor((remainingSeconds % 3600) / 60);
+								const seconds = remainingSeconds % 60;
 								
 								if (remainingSeconds > 0) {
-									const hours = Math.floor(remainingSeconds / 3600);
-									const minutes = Math.floor((remainingSeconds % 3600) / 60);
-									const seconds = remainingSeconds % 60;
 									timerEl.textContent = String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
 								} else {
-									// Timer reached 0
+									// Timer reached 0 or exceeded 24 hours
 									timerEl.textContent = '00:00:00';
 									if (window[intervalKey]) {
 										clearInterval(window[intervalKey]);
 										delete window[intervalKey];
 									}
-									// Only reload once, add a flag to prevent multiple reloads
-									if (!window['reloading_' + sessionId + '_' + kapalId]) {
+									// Auto-stop session if it exceeded 24 hours
+									if (elapsedSeconds >= maxDuration && !window['autoStopping_' + sessionId]) {
+										window['autoStopping_' + sessionId] = true;
+										// Automatically stop the session
+										stopMonitoringSession(kapalId, sessionId);
+									} else if (!window['reloading_' + sessionId + '_' + kapalId] && !window['stopping_' + sessionId] && !window['pageReloading']) {
+										// Only reload once, add a flag to prevent multiple reloads
 										window['reloading_' + sessionId + '_' + kapalId] = true;
+										window['pageReloading'] = true;
 										setTimeout(() => {
 											window.location.reload();
-										}, 100);
+										}, 2000); // Delay 2 seconds to allow user to see timer reached 0
 									}
 								}
 							}
@@ -891,10 +1080,40 @@
 	
 	// Initialize on page load (only once)
 	if (document.readyState === 'loading') {
-		document.addEventListener('DOMContentLoaded', updateTimers);
+		document.addEventListener('DOMContentLoaded', function() {
+			updateTimers();
+			setupStopButtons();
+		});
 	} else {
 		// DOM already loaded
 		updateTimers();
+		setupStopButtons();
+	}
+	
+	// Setup stop buttons with event listeners
+	function setupStopButtons() {
+		// Find all stop buttons and add event listeners
+		const stopButtons = document.querySelectorAll('.stop-monitoring-btn');
+		stopButtons.forEach(button => {
+			// Remove existing listeners by cloning
+			const newButton = button.cloneNode(true);
+			button.parentNode.replaceChild(newButton, button);
+			
+			// Add click event listener
+			newButton.addEventListener('click', function(e) {
+				e.preventDefault();
+				e.stopPropagation();
+				e.stopImmediatePropagation();
+				
+				// Get sessionId and kapalId from data attributes
+				const sessionId = parseInt(newButton.getAttribute('data-session-id'));
+				const kapalId = newButton.getAttribute('data-kapal-id');
+				
+				if (sessionId && kapalId) {
+					stopMonitoringSession(kapalId, sessionId);
+				}
+			}, true); // Use capture phase
+		});
 	}
 	</script>
 	@include('components.profil-modal')

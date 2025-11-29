@@ -6,29 +6,23 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
+    /**
+     * Run the migrations.
+     */
     public function up(): void
     {
-        Schema::table('dashboard_monitorings', function (Blueprint $table) {
+        Schema::table('notifikasis', function (Blueprint $table) {
             $table->string('nama_kapal')->nullable()->after('kolam_id');
-            $table->index('nama_kapal');
         });
     }
 
+    /**
+     * Reverse the migrations.
+     */
     public function down(): void
     {
-        Schema::table('dashboard_monitorings', function (Blueprint $table) {
-            $table->dropIndex(['nama_kapal']);
+        Schema::table('notifikasis', function (Blueprint $table) {
             $table->dropColumn('nama_kapal');
         });
     }
 };
-
-
-
-
-
-
-
-
-
-

@@ -51,6 +51,7 @@ Route::post('/api/predict-growth', [UserController::class, 'predictGrowth'])->na
 Route::get('/api/training-progress', [UserController::class, 'getTrainingProgress'])->name('api.training-progress');
 Route::get('/profil', [UserController::class, 'profil'])->name('user.profil');
 Route::get('/price-tracker', [UserController::class, 'priceTracker'])->name('user.price-tracker');
+Route::post('/api/refresh-price-tracker', [UserController::class, 'refreshPriceTracker'])->name('api.refresh-price-tracker');
 
 // Admin routes (Firebase auth handled in frontend)
 Route::prefix('admin')->group(function () {
